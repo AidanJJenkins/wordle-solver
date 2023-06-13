@@ -7,10 +7,10 @@ function WordList(props) {
 
 
   return (
-    <div style={{ marginTop: "20px" }}>
+    <div style={{ paddingTop: '1rem', maxHeight: '10px'}}>
       <Card md="6">
         <CardHeader>
-          Words
+          Possible Answers:
         </CardHeader>
         <ListGroup flush>
           {

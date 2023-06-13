@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 actix-cors = "0.6.4"
+actix-service = "2.0.2"
 actix-web = "4"
 bcrypt = "0.14.0"
 cargo-modules = "0.8.0"
@@ -15,6 +16,8 @@ cargo-watch = "8.4.0"
 chrono = { version = "0.4.24", features = ["serde"] }
 dotenv = "0.15.0"
 env_logger = "0.10.0"
+futures = "0.3.28"
+futures-util = "0.3.28"
 jsonwebtoken = "8.3.0"
 log = "0.4"
 serde = "1.0.162"

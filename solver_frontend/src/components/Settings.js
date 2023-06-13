@@ -1,31 +1,45 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 import axios from 'axios'
 import { Col, Form, Button, FormGroup, Label, Input, Row, Alert } from 'reactstrap'
+import Navbar from './Navbar'
 import 'bootstrap/dist/css/bootstrap.min.css';
 import * as Yup from "yup";
+import jwt_decode from "jwt-decode";
 
-const registerSchema = Yup.object().shape({
-  username: Yup.string().required('Username is required'),
-  email: Yup.string().email('Invalid email address').required('Email is required'),
-  password: Yup.string().required('Password is required'),
+const settingsSchema = Yup.object().shape({
+  username: Yup.string(),
+  email: Yup.string().email('Invalid email address'),
+  password: Yup.string(),
 })
 
-function CreateUser() {
+function Settings() {
   const navigate = useNavigate()
 
-  let initialValues = {
-    email: '',
-    username: '',
-    password: ''
-  }
-
-  let [form, setForm] = useState(initialValues)
   let [disabled, setDisabled] = useState(true)
   let [error, setError] = useState({username: "", email: "", password: ""})
 
+  let token = localStorage.getItem('token')
+  let decoded = jwt_decode(token);
+  
+ useEffect(() => {
+    const fetchSettings = async () => {
+     const response = await axios.get(`http://localhost:8000/api/users/${decoded.user_id}`)
+      const {username, email, password} = response.data
+      setForm({
+        username: username,
+        email: email,
+        //password: password
+      })
+    }
+    fetchSettings()
+  }, [])
+
+  let [form, setForm] = useState({username: '', email: '', password: ''})
+
+
   useEffect(() => {
-    registerSchema.isValid(form).then(valid => {
+    settingsSchema.isValid(form).then(valid => {
       setDisabled(!valid)
     })
   },[form])
@@ -36,7 +50,7 @@ function CreateUser() {
     setForm({ ...form, [name]: value })
 
     Yup
-      .reach(registerSchema, e.target.name)
+      .reach(settingsSchema, e.target.name)
       .validate(e.target.value)
       .then(valid => {
         setError({
@@ -53,33 +67,35 @@ function CreateUser() {
 
   function handleSubmit(e){
     e.preventDefault()
-     axios.post('http://localhost:8000/api/users/register', form)
+     axios.put(`http://localhost:8000/api/users/${decoded.user_id}`, form)
       .then((res) => {
         console.log(res.data)
       })
       .catch(function (error) {
         console.log(error);
       });
-    navigate("/login")
-    setForm(initialValues)
+    navigate("/solver")
+    //setForm(initialValues)
+    console.log(form)
   }
 
   return (
+    <div>
+    <Navbar />
     <div class="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: '15vh', maxHeight: '100vh' }}>
       <Col sm="6">
-        <h2 style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '10vh'}}> Create Account</h2>
+        <h2 style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '10vh'}}> Settings</h2>
         <Form onSubmit={e => handleSubmit(e)}>
           <FormGroup>
             <Label for="exampleUsername">
               Username
             </Label>
             <Input
-              id="exampleUsername"
               value={form.username} 
               onChange={e => handleChange(e)} 
               name="username"
-              placeholder="JohnSmith123"
-              type="username"
+              placeholder={form.username}
+              type="text"
             />
           </FormGroup>
           <FormGroup>
@@ -87,12 +103,11 @@ function CreateUser() {
               Email
             </Label>
             <Input
-              id="exampleEmail"
               onChange={e => handleChange(e)} 
               value={form.email} 
               name="email"
-              placeholder="johnsmith@email.com"
-              type="email"
+              placeholder={form.email}
+              type="text"
             />
           </FormGroup>
           <FormGroup>
@@ -100,12 +115,11 @@ function CreateUser() {
               Password
             </Label>
             <Input
-              id="examplePassword"
               onChange={e => handleChange(e)} 
               value={form.password} 
               name="password"
-              placeholder="password12345"
-              type="password"
+              placeholder={"*********"}
+              type="text"
             />
           </FormGroup>
           { error.username.length > 0 && <Alert color="danger">{error.username}</Alert> }
@@ -114,24 +128,15 @@ function CreateUser() {
           <Row>
             <Col md="8">
               <Button color='primary' class="submit" type="submit" disabled={disabled}>
-                Submit
+                Update
               </Button>
-            </Col>
-            <Col>
-              <div>
-                <p>
-                  <span style={{ fontSize: '0.9em' }}>
-                  Already have an account?{' '}
-                  <Link to="/login">Click here to login.</Link>
-                  </span>
-                </p>
-              </div>
             </Col>
           </Row>
         </Form>
       </Col>
     </div>
+    </div>
   );
 }
 
-export default CreateUser;
+export default Settings;

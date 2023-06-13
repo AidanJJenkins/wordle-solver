@@ -1,11 +1,12 @@
 use crate::AppState;
+use actix_web::web::service;
 use actix_web::{put, delete, get, post, web, HttpResponse, Responder};
 use chrono::Local;
 use sqlx::Row;
 use log::error;
-use crate::models::users_models::{NewUser, UserResponse, LoginCredentials, Token};
+use crate::models::users_models::{NewUser, UserResponse, LoginCredentials, Token, Tokens};
 use crate::utils::bcrypt_utils::{hash_password, verify_password};
-use crate::utils::jwt_utils::generate_token;
+use crate::utils::jwt_utils::{generate_access_token, generate_refresh_token, verify_token, decode_token_id};
 use std::time::Instant;
 
 pub fn user_routes(conf: &mut web::ServiceConfig) {
@@ -16,7 +17,8 @@ pub fn user_routes(conf: &mut web::ServiceConfig) {
         .service(update_user)
         .service(delete_user)
         .service(login_user)
-        .service(revoke_token);
+        .service(revoke_token)
+        .service(refresh_tokens);
 
     conf.service(scope);
 }
@@ -119,8 +121,8 @@ pub async fn get_user_by_id(pool: web::Data<AppState>, path: web::Path<(i32,)>) 
     }
 }
 
-#[put("/get/{id}")]
-pub async fn update_user(pool: web::Data<AppState>, path: web::Path<(i32,)>, updated_user: web::Json<UserResponse>) -> impl Responder{
+#[put("/{id}")]
+pub async fn update_user(pool: web::Data<AppState>, path: web::Path<(i32,)>, updated_user: web::Json<NewUser>) -> impl Responder{
     //the into_inner() method is used to access the inner value, which is a tuple containing a single i32 value 
     //the tuple is then destructured, and the id is bound to the variable id.
     let (id,) = path.into_inner();
@@ -138,7 +140,10 @@ pub async fn update_user(pool: web::Data<AppState>, path: web::Path<(i32,)>, upd
 
     match query {
         Ok(_) => HttpResponse::Ok().json("User updated successfully"),
-        Err(_) => HttpResponse::InternalServerError().json("Failed to update user"),
+        Err(error) => {
+            eprintln!("Error: {}", error);
+            HttpResponse::InternalServerError().json("Failed to update user")
+        }
     }
 }
 
@@ -188,20 +193,32 @@ async fn validate_credentials(pool: &web::Data<AppState>, username: &str, passwo
 
 #[post("/login")]
 pub async fn login_user(pool: web::Data<AppState>, credentials: web::Json<LoginCredentials>) -> HttpResponse {
-    // Validate user credentials against the database
     let user_id = match validate_credentials(&pool, &credentials.username, &credentials.password).await {
         Some(user_id) => user_id,
         None => return HttpResponse::Unauthorized().body("Invalid credentials"),
     };
 
-    // Generate a JWT token for the authenticated user
-    let token = match generate_token(user_id) {
+    let access_token = match generate_access_token(user_id) {
         Ok(token) => token,
         Err(_) => return HttpResponse::InternalServerError().body("Failed to generate token"),
     };
 
-    // Return the JWT token in the response
-    HttpResponse::Ok().body(token)
+    let new_refresh_token = match generate_refresh_token(user_id) {
+        Ok(token) => token,
+        Err(_) => return HttpResponse::InternalServerError().body("Failed to generate token"),
+    };
+
+    let new_tokens = Tokens {
+        access: access_token,
+        refresh: new_refresh_token
+    };
+
+    let json_body = match serde_json::to_string(&new_tokens) {
+        Ok(body) => body,
+        Err(_) => return HttpResponse::InternalServerError().body("Failed to serialize response"),
+    };
+
+    HttpResponse::Ok().body(json_body)
 }
 
 #[post("/revoke_token")]
@@ -226,4 +243,41 @@ pub async fn revoke_token(pool: web::Data<AppState>, token: web::Json<Token>) ->
         }
 }
 
+#[post("/get_new_tokens")]
+pub async fn refresh_tokens(token: web::Json<Token>) -> HttpResponse {
+    let token_valid = verify_token(&token.token).unwrap_or(false);
 
+    if !token_valid {
+        return HttpResponse::Unauthorized().body("Unauthorized");
+    }
+
+    let user_id = decode_token_id(&token.token);
+
+    let access_token = match generate_refresh_token(user_id) {
+        Ok(token) => token,
+        Err(err) => {
+            println!("Error generating refresh token: {}", err);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    let new_refresh_token = match generate_refresh_token(user_id) {
+        Ok(token) => token,
+        Err(err) => {
+            println!("Error generating refresh token: {}", err);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    let new_tokens = Tokens {
+        access: access_token,
+        refresh: new_refresh_token
+    };
+
+    let json_body = match serde_json::to_string(&new_tokens) {
+        Ok(body) => body,
+        Err(_) => return HttpResponse::InternalServerError().body("Failed to serialize response"),
+    };
+
+    HttpResponse::Ok().body(json_body)
+}
