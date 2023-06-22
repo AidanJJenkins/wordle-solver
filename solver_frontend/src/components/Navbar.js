@@ -12,7 +12,7 @@ import { useNavigate } from "react-router-dom"
 
 function NavBar() {
   const navigate = useNavigate()
-  let token = localStorage.getItem('token')
+  let token = localStorage.getItem('access-token')
 
   const goSettings = () => {
     navigate('/settings')
@@ -23,7 +23,7 @@ function NavBar() {
   }
 
   const handleLogout = () => {
-    axios.post('http://localhost:8000/api/users/revoke_token', { token: token })
+    axios.post('http://localhost:8080/api/users/revoke_token', { token: token })
       .then((res) => {
         localStorage.removeItem('token');
         navigate('/login')

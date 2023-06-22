@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from "react-router-dom"
 import axios from 'axios'
-import { Col, Form, Button, FormGroup, Label, Input, Row, Alert } from 'reactstrap'
+import { Col, Spinner, Form, Button, FormGroup, Label, Input, Row, Alert } from 'reactstrap'
 import 'bootstrap/dist/css/bootstrap.min.css';
 import * as Yup from "yup";
+import { useCookies } from 'react-cookie'
 
 const registerSchema = Yup.object().shape({
   username: Yup.string().required('Username is required'),
@@ -23,6 +24,9 @@ function CreateUser() {
   let [form, setForm] = useState(initialValues)
   let [disabled, setDisabled] = useState(true)
   let [error, setError] = useState({username: "", email: "", password: ""})
+  let [customError, setCustomError] = useState("")
+  let [spinnerOn, setSpinnerOn] = useState(false)
+  const [cookies, setCookie] = useCookies(['refresh_token'])
 
   useEffect(() => {
     registerSchema.isValid(form).then(valid => {
@@ -53,15 +57,25 @@ function CreateUser() {
 
   function handleSubmit(e){
     e.preventDefault()
-     axios.post('http://localhost:8000/api/users/register', form)
+    setSpinnerOn(true)
+     axios.post('http://localhost:8080/api/users/register', form)
       .then((res) => {
-        console.log(res.data)
+        console.log(res)
+        localStorage.setItem("access-token", res.data.access)
+        setCookie('refresh_token', res.data.refresh)
+        setSpinnerOn(false)
+        navigate("/solver")
+        setForm(initialValues)
       })
-      .catch(function (error) {
-        console.log(error);
+      .catch((error) => {
+        if (error.response && error.response.data) {
+          setSpinnerOn(false)
+          console.log(error.response.data);
+          setCustomError(error.response.data)
+        } else {
+          console.log(error);
+        }
       });
-    navigate("/login")
-    setForm(initialValues)
   }
 
   return (
@@ -111,10 +125,14 @@ function CreateUser() {
           { error.username.length > 0 && <Alert color="danger">{error.username}</Alert> }
           { error.email.length > 0 && <Alert color="danger">{error.email}</Alert> }
           { error.password.length > 0 && <Alert color="danger">{error.password}</Alert> }
+          { customError.length > 0 && <Alert color="danger">{customError}</Alert> }
           <Row>
             <Col md="8">
               <Button color='primary' class="submit" type="submit" disabled={disabled}>
-                Submit
+                { spinnerOn && <Spinner style={{ height: "1rem", width: "1rem"}}size="xs">Loading...</Spinner> }
+                <span>
+                  {' '}Submit
+                </span>
               </Button>
             </Col>
             <Col>

@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from "react-router-dom"
 import axios from 'axios'
 import { Col, Form, Button, FormGroup, Label, Input, Row, Alert } from 'reactstrap'
 import Navbar from './Navbar'
 import 'bootstrap/dist/css/bootstrap.min.css';
 import * as Yup from "yup";
 import jwt_decode from "jwt-decode";
+import DeleteModal from './DeleteModal';
 
 const settingsSchema = Yup.object().shape({
   username: Yup.string(),
@@ -14,45 +14,41 @@ const settingsSchema = Yup.object().shape({
 })
 
 function Settings() {
-  const navigate = useNavigate()
-
   let [disabled, setDisabled] = useState(true)
   let [error, setError] = useState({username: "", email: "", password: ""})
 
-  let token = localStorage.getItem('token')
+  let token = localStorage.getItem('access-token')
   let decoded = jwt_decode(token);
-  
+  let [form, setForm] = useState({username: "", email: "", password: ""})
+
  useEffect(() => {
     const fetchSettings = async () => {
-     const response = await axios.get(`http://localhost:8000/api/users/${decoded.user_id}`)
-      const {username, email, password} = response.data
+     const response = await axios.get(`http://localhost:8080/api/users/${decoded.user_id}`)
+      let {username, email} = response.data
       setForm({
         username: username,
         email: email,
-        //password: password
       })
     }
     fetchSettings()
-  }, [])
-
-  let [form, setForm] = useState({username: '', email: '', password: ''})
+  }, [decoded.user_id])
 
 
   useEffect(() => {
     settingsSchema.isValid(form).then(valid => {
       setDisabled(!valid)
     })
-  },[form])
-
+  })
 
   function handleChange(e) {
-    const { name, value } = e.target
+    let { name, value } = e.target
     setForm({ ...form, [name]: value })
 
     Yup
       .reach(settingsSchema, e.target.name)
       .validate(e.target.value)
       .then(valid => {
+        console.log(valid)
         setError({
           ...error, [e.target.name]: ""
         });
@@ -65,18 +61,36 @@ function Settings() {
 
   }
 
-  function handleSubmit(e){
-    e.preventDefault()
-     axios.put(`http://localhost:8000/api/users/${decoded.user_id}`, form)
+  const updateUserPassword = () => {
+     axios.put(`http://localhost:8080/api/users/update_password/${decoded.user_id}`, {password: form.password})
       .then((res) => {
         console.log(res.data)
       })
       .catch(function (error) {
         console.log(error);
       });
-    navigate("/solver")
-    //setForm(initialValues)
-    console.log(form)
+  }
+
+  const updateUser = () => {
+     axios.put(`http://localhost:8080/api/users/update/${decoded.user_id}`, {username: form.username, email: form.email})
+      .then((res) => {
+        console.log(res.data)
+      })
+      .catch(function (error) {
+        console.log(error);
+      });
+  }
+
+  function handleSubmit(){
+    if (form.password !== undefined || form.password !== ""){
+      console.log("updated password, username, and email")
+      updateUserPassword()
+      updateUser()
+    } else {
+      console.log("updated username and email")
+      updateUser()
+    }
+    setForm({password: ""})
   }
 
   return (
@@ -85,7 +99,7 @@ function Settings() {
     <div class="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop: '15vh', maxHeight: '100vh' }}>
       <Col sm="6">
         <h2 style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '10vh'}}> Settings</h2>
-        <Form onSubmit={e => handleSubmit(e)}>
+        <Form onSubmit={handleSubmit}>
           <FormGroup>
             <Label for="exampleUsername">
               Username
@@ -94,7 +108,6 @@ function Settings() {
               value={form.username} 
               onChange={e => handleChange(e)} 
               name="username"
-              placeholder={form.username}
               type="text"
             />
           </FormGroup>
@@ -106,7 +119,6 @@ function Settings() {
               onChange={e => handleChange(e)} 
               value={form.email} 
               name="email"
-              placeholder={form.email}
               type="text"
             />
           </FormGroup>
@@ -130,6 +142,9 @@ function Settings() {
               <Button color='primary' class="submit" type="submit" disabled={disabled}>
                 Update
               </Button>
+            </Col>
+            <Col className="d-flex justify-content-end">
+              <DeleteModal decodedId={decoded.user_id} />
             </Col>
           </Row>
         </Form>

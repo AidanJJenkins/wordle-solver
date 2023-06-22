@@ -23,6 +23,7 @@ function Solver() {
     fourth: "",
     fifth: "",
   }
+
   const [disabled, setDisabled] = useState(false)
   let [exactForm, setExactForm] = useState(initialPosLetter)
   let [posLetter, setPosLetter] = useState("")
@@ -39,7 +40,22 @@ function Solver() {
     if (!token) {
       navigate("/login");
     }
-  }, )
+  const fetchData = async () => {
+      try {
+        const response = await axios.post(
+          "http://localhost:8080/api/users/check_access",
+          { token }
+        );
+        if (response.status === 401) {
+          navigate("/login");
+        }
+      } catch (error) {
+        console.log(error);
+      }
+    };
+
+    fetchData();    
+  },)
 
   useEffect(() => {
     const correctLetters = letterForm.correct.toLowerCase();
@@ -91,7 +107,7 @@ function Solver() {
     let yellow = letterForm.correct
     let grey = ""
     letterForm.incorrect === "" ? grey = "_" : grey = letterForm.incorrect
-     axios.post('http://localhost:8000/api/game/general-letters', {correct: yellow, incorrect: grey, exact: posLetter},
+     axios.post('http://localhost:8080/api/game/general-letters', {correct: yellow, incorrect: grey, exact: posLetter},
     {
       headers: {
         Authorization: `Bearer ${token}`
@@ -109,13 +125,14 @@ function Solver() {
   
   async function refreshAccessToken() {
     try {
-      let refreshToken = cookies.access_token;
+      let refreshToken = cookies.refresh_token;
 
-      let response = await axios.post('http://localhost:8000/api/users/get_new_tokens', {
+      let response = await axios.post('http://localhost:8080/api/users/get_new_tokens', {
         token: refreshToken
       });
+      console.log(response)
 
-      let accessToken = response.data.access_token;
+      let accessToken = response.data.access;
 
       return accessToken;
     } catch (error) {
@@ -132,7 +149,7 @@ function Solver() {
       if (error.response.status === 401 && !originalRequest._retry) {
         originalRequest._retry = true;
         const accessToken = await refreshAccessToken(); // function to get a new access token using the refresh token
-        window.localStorage.setItem('access_token', accessToken);
+        window.localStorage.setItem('access-token', accessToken);
         return axios(originalRequest);
       }
 
@@ -151,8 +168,8 @@ function Solver() {
     <NavBar />
     <div class="container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginTop:"15vh", maxHeight: '90vh'}}>
       <Col md="6">
-        <h2 style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '10vh'}}>Solve your wordle</h2>
-        <Form onSubmit={e => handleSubmit(e)}>
+        <h2 style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '10vh'}}>Get to solving!</h2>
+        <Form autocomplete="off" onSubmit={e => handleSubmit(e)}>
           <FormGroup>
             <Label for="correct letters in correct positions">
               Green Letters:

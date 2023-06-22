@@ -21,6 +21,17 @@ pub struct NewUser {
     pub password: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UpdateUser {
+    pub username: String,
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UpdatePassword {
+    pub password: String,
+}
+
 #[derive(Debug, Deserialize, Serialize, FromRow)]
 pub struct UserResponse {
     pub id: i32,

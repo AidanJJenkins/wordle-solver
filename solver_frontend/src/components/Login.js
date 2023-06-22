@@ -52,7 +52,7 @@ function Login() {
   function handleSubmit(e){
     e.preventDefault()
     setSpinnerOn(true)
-    axios.post('http://localhost:8000/api/users/login', loginForm)
+    axios.post('http://localhost:8080/api/users/login', loginForm)
       .then((res) => {
         localStorage.setItem("access-token", res.data.access)
         setCookie('refresh_token', res.data.refresh)

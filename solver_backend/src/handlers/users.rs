@@ -1,10 +1,9 @@
 use crate::AppState;
-use actix_web::web::service;
 use actix_web::{put, delete, get, post, web, HttpResponse, Responder};
 use chrono::Local;
-use sqlx::Row;
+use sqlx::{Row, PgPool};
 use log::error;
-use crate::models::users_models::{NewUser, UserResponse, LoginCredentials, Token, Tokens};
+use crate::models::users_models::{NewUser, UserResponse, LoginCredentials, Token, Tokens, UpdateUser, UpdatePassword};
 use crate::utils::bcrypt_utils::{hash_password, verify_password};
 use crate::utils::jwt_utils::{generate_access_token, generate_refresh_token, verify_token, decode_token_id};
 use std::time::Instant;
@@ -15,15 +14,16 @@ pub fn user_routes(conf: &mut web::ServiceConfig) {
         .service(get_all_users)
         .service(get_user_by_id)
         .service(update_user)
+        .service(update_user_password)
         .service(delete_user)
         .service(login_user)
         .service(revoke_token)
-        .service(refresh_tokens);
+        .service(refresh_tokens)
+        .service(check_access);
 
     conf.service(scope);
 }
-//This is an attribute macro that indicates that this function is associated with the HTTP POST method and the "/user" route
-//It's used by actix web framework to handle incoming POST requests to the "/user" endpoint.
+
 #[post("/register")]
 pub async fn create_user(pool: web::Data<AppState>, new_user: web::Json<NewUser>) -> impl Responder {
     let now = Local::now().naive_local();
@@ -56,9 +56,41 @@ pub async fn create_user(pool: web::Data<AppState>, new_user: web::Json<NewUser>
             //if the query is successful, it returns an httpresponse
             //the "_" wildcard pattern is a catch-all for unmatched cases. If no patterns match and there is no "_" arm
             //the match expression will be considered incomplete and the compiler will raise an error.
-            Ok(_) => HttpResponse::Ok().body("User created"),
+            //Ok(_) => HttpResponse::Ok().body("User created"),
+            Ok(row) => {
+                let user_id: i32 = row.get("id");
+
+                let access_token = match generate_access_token(user_id) {
+                    Ok(token) => token,
+                    Err(_) => return HttpResponse::InternalServerError().body("Failed to generate token"),
+                };
+
+                let new_refresh_token = match generate_refresh_token(user_id) {
+                    Ok(token) => token,
+                    Err(_) => return HttpResponse::InternalServerError().body("Failed to generate token"),
+                };
+
+                let new_tokens = Tokens {
+                    access: access_token,
+                    refresh: new_refresh_token
+                };
+
+                let json_body = match serde_json::to_string(&new_tokens) {
+                    Ok(body) => body,
+                    Err(_) => return HttpResponse::InternalServerError().body("Failed to serialize response"),
+                };
+
+                HttpResponse::Ok().body(json_body)
+            }
             //if not successful, it logs an error
             Err(error) => {
+                let error_message = error.to_string();
+                if error_message.contains("duplicate key value violates unique constraint") {
+                    println!("{}", error);
+                    return HttpResponse::BadRequest().body("Username or Email already exists");
+                }
+
+                println!("{error}");
                 error!("Failed to insert new user: {}", error);
                 HttpResponse::InternalServerError().body("Failed to create user")
             }
@@ -121,25 +153,52 @@ pub async fn get_user_by_id(pool: web::Data<AppState>, path: web::Path<(i32,)>) 
     }
 }
 
-#[put("/{id}")]
-pub async fn update_user(pool: web::Data<AppState>, path: web::Path<(i32,)>, updated_user: web::Json<NewUser>) -> impl Responder{
-    //the into_inner() method is used to access the inner value, which is a tuple containing a single i32 value 
-    //the tuple is then destructured, and the id is bound to the variable id.
+#[put("/update/{id}")]
+pub async fn update_user(pool: web::Data<AppState>, path: web::Path<(i32,)>, updated_user: web::Json<UpdateUser>) -> impl Responder{
     let (id,) = path.into_inner();
     let user = updated_user.into_inner();
 
     let query = sqlx::query(
-            "UPDATE users SET username = $1, email = $2, password = $3 WHERE id = $4"
+            "UPDATE users SET username = $1, email = $2 WHERE id = $3"
         )
         .bind(user.username)
         .bind(user.email)
-        .bind(user.password)
         .bind(id)
         .execute(&pool.db)
         .await;
 
     match query {
         Ok(_) => HttpResponse::Ok().json("User updated successfully"),
+        Err(error) => {
+            eprintln!("Error: {}", error);
+            HttpResponse::InternalServerError().json("Failed to update user")
+        }
+    }
+}
+
+#[put("/update_password/{id}")]
+pub async fn update_user_password(pool: web::Data<AppState>, path: web::Path<(i32,)>, updated_user: web::Json<UpdatePassword>) -> impl Responder{
+    let (id,) = path.into_inner();
+    let user = updated_user.into_inner();
+
+    let hashed_password = match hash_password(&user.password) {
+        Ok(hashed) => hashed,
+        Err(error) => {
+            error!("Failed to hash password: {}", error);
+            return HttpResponse::InternalServerError().body("Failed to create user");
+        }
+    };
+
+    let query = sqlx::query(
+            "UPDATE users SET password = $1 WHERE id = $2"
+        )
+        .bind(hashed_password)
+        .bind(id)
+        .execute(&pool.db)
+        .await;
+
+    match query {
+        Ok(_) => HttpResponse::Ok().json("User password updated"),
         Err(error) => {
             eprintln!("Error: {}", error);
             HttpResponse::InternalServerError().json("Failed to update user")
@@ -163,7 +222,6 @@ pub async fn delete_user(pool: web::Data<AppState>, path: web::Path<(i32,)>) -> 
 }
 
 async fn validate_credentials(pool: &web::Data<AppState>, username: &str, password: &str) -> Option<i32> {
-    // Fetch the user's hashed password from the database
     // if I dont need to bind anything, use the query! macro instead of query
     let query_result = sqlx::query!(
         r#"
@@ -178,14 +236,13 @@ async fn validate_credentials(pool: &web::Data<AppState>, username: &str, passwo
     if let Some(row) = query_result {
         let stored_password = row.password;
 
-        // Verify the provided password against the stored hashed password
-    let start_time = Instant::now();
-        if verify_password(password, &stored_password) {
-            // Return the user ID if the credentials are valid
-    let total_duration = start_time.elapsed();
-    println!("Total validation time: {:?}", total_duration);
-            return Some(row.id);
-        }
+        let start_time = Instant::now();
+            if verify_password(password, &stored_password) {
+                // Return the user ID if the credentials are valid
+                let total_duration = start_time.elapsed();
+                println!("Total validation time: {:?}", total_duration);
+                return Some(row.id);
+            }
     }
 
     None
@@ -244,7 +301,13 @@ pub async fn revoke_token(pool: web::Data<AppState>, token: web::Json<Token>) ->
 }
 
 #[post("/get_new_tokens")]
-pub async fn refresh_tokens(token: web::Json<Token>) -> HttpResponse {
+pub async fn refresh_tokens(token: web::Json<Token>, pool: web::Data<AppState>) -> HttpResponse {
+    let revoked_token = check_revoked_token(&token.token, &pool.db).await;
+
+    if revoked_token {
+        return HttpResponse::Unauthorized().body("Token has been revoked");
+    }
+
     let token_valid = verify_token(&token.token).unwrap_or(false);
 
     if !token_valid {
@@ -280,4 +343,38 @@ pub async fn refresh_tokens(token: web::Json<Token>) -> HttpResponse {
     };
 
     HttpResponse::Ok().body(json_body)
+}
+
+async fn check_revoked_token(token: &str, pool: &PgPool) -> bool {
+    let query = sqlx::query(
+        r#"
+        SELECT token FROM revoked_tokens WHERE token = $1
+        "#,
+    )
+    .bind(token)
+    .fetch_one(pool)
+    .await;
+
+    match query {
+        Ok(_) => true,
+        Err(_) => false,
+    }
+}
+
+#[post("/check_access")]
+pub async fn check_access(token: web::Json<Token>, pool: web::Data<AppState>) -> HttpResponse {
+    let revoked_token = check_revoked_token(&token.token, &pool.db).await;
+
+    if revoked_token {
+        return HttpResponse::Unauthorized().body("Token has been revoked");
+    }
+
+    let token_valid = verify_token(&token.token).unwrap_or(false);
+
+    if !token_valid {
+        return HttpResponse::Unauthorized().body("Unauthorized");
+    }
+
+
+    HttpResponse::Ok().body("access granted")
 }
