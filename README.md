@@ -1,1 +1,1 @@
-# wordle-helper
+# wordle-solver
