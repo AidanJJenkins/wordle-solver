@@ -1,2 +1,2 @@
 [env]
-DATABASE_URL = "default val"
+DATABASE_URL = "postgres://postgres:OPDhVaVMQRh5M8V@localhost:5432"

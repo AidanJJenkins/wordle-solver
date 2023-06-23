@@ -23,4 +23,5 @@ yarn-debug.log*
 yarn-error.log*
 
 solver_backend/target/
+solver_backend/db/pgdata
 solver_frontend/node_modules/
