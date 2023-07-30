@@ -22,12 +22,11 @@
 # # Run the app
 # CMD ./wordle_solver
 #
-FROM rust:1.70.0
-
-WORKDIR /usr/src/wordle_solver
-COPY . .
-
-RUN cargo install --path .
+# FROM rust:1.70.0
+#
+# WORKDIR /usr/src/wordle_solver
+# COPY . .
+#
+# RUN cargo install --path .
 
 #CMD ["wordle_solver"]
-

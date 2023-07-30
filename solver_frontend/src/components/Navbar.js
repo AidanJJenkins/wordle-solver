@@ -23,7 +23,7 @@ function NavBar() {
   }
 
   const handleLogout = () => {
-    axios.post('http://localhost:8080/api/users/revoke_token', { token: token })
+    axios.post('http://localhost:8000/revoke_token', { token: token })
       .then((res) => {
         localStorage.removeItem('token');
         navigate('/login')

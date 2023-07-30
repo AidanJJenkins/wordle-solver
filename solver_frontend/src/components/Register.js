@@ -58,7 +58,7 @@ function CreateUser() {
   function handleSubmit(e){
     e.preventDefault()
     setSpinnerOn(true)
-     axios.post('http://localhost:8080/api/users/register', form)
+     axios.post('http://localhost:8000/register', form)
       .then((res) => {
         console.log(res)
         localStorage.setItem("access-token", res.data.access)

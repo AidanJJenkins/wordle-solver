@@ -43,7 +43,7 @@ function Solver() {
   const fetchData = async () => {
       try {
         const response = await axios.post(
-          "http://localhost:8080/api/users/check_access",
+          "http://localhost:8000/check_access",
           { token }
         );
         if (response.status === 401) {
@@ -107,7 +107,7 @@ function Solver() {
     let yellow = letterForm.correct
     let grey = ""
     letterForm.incorrect === "" ? grey = "_" : grey = letterForm.incorrect
-     axios.post('http://localhost:8080/api/game/general-letters', {correct: yellow, incorrect: grey, exact: posLetter},
+     axios.post('http://localhost:8000/solve', {correct: yellow, incorrect: grey, exact: posLetter},
     {
       headers: {
         Authorization: `Bearer ${token}`
