@@ -23,8 +23,8 @@ function Settings() {
 
  useEffect(() => {
     const fetchSettings = async () => {
-     const response = await axios.get(`http://localhost:8080/api/users/${decoded.user_id}`)
-      let {username, email} = response.data
+     const response = await axios.get(`http://localhost:8000/get_user/${decoded.user_id}`)
+      let {username, email} = response.data[0]
       setForm({
         username: username,
         email: email,
@@ -62,7 +62,7 @@ function Settings() {
   }
 
   const updateUserPassword = () => {
-     axios.put(`http://localhost:8080/api/users/update_password/${decoded.user_id}`, {password: form.password})
+     axios.put(`http://localhost:8000/update_password/${decoded.user_id}`, {password: form.password})
       .then((res) => {
         console.log(res.data)
       })
@@ -72,7 +72,7 @@ function Settings() {
   }
 
   const updateUser = () => {
-     axios.put(`http://localhost:8080/api/users/update/${decoded.user_id}`, {username: form.username, email: form.email})
+     axios.put(`http://localhost:8000/update_user/${decoded.user_id}`, {username: form.username, email: form.email})
       .then((res) => {
         console.log(res.data)
       })

@@ -38,8 +38,8 @@ pub struct UserResponse {
     pub username: String,
     pub email: String,
     pub password: String,
-    pub created_at: NaiveDateTime,
-    pub updated_at: NaiveDateTime,
+    pub created_at: Option<NaiveDateTime>,
+    pub updated_at: Option<NaiveDateTime>,
 }
 
 #[derive(Debug, Deserialize)]

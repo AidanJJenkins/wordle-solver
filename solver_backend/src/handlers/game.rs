@@ -1,15 +1,7 @@
 use crate::models::game_models::RequestLetters;
-use crate::AppState;
-use actix_web::{post, web, HttpResponse, HttpRequest};
+use actix_web::{web, HttpResponse, HttpRequest};
+use sqlx::PgPool;
 use crate::utils::jwt_utils::verify_token;
-
-pub fn game_routes(conf: &mut web::ServiceConfig) {
-    let scope = web::scope("/game")
-//      .wrap(Auth)
-        .service(find_letters);
-
-    conf.service(scope);
-}
 
 pub fn get_bearer_token(req: &HttpRequest) -> Option<String> {
     req.headers()
@@ -24,8 +16,7 @@ pub fn get_bearer_token(req: &HttpRequest) -> Option<String> {
         })
 }
 
-#[post("/general-letters")]
-pub async fn find_letters(pool: web::Data<AppState>, req: HttpRequest, letters: web::Json<RequestLetters>) -> HttpResponse {
+pub async fn find_letters(pool: web::Data<PgPool>, req: HttpRequest, letters: web::Json<RequestLetters>) -> HttpResponse {
     let access_token = get_bearer_token(&req);
 
     if access_token.is_none() {
@@ -45,7 +36,7 @@ pub async fn find_letters(pool: web::Data<AppState>, req: HttpRequest, letters: 
 
     let query = format!("SELECT word FROM word_list WHERE word ILIKE '{}' AND word ~* '{}' AND NOT (word ~* '.*[{}].*')", letters.exact, correct_pattern, letters.incorrect);
 
-    let words = sqlx::query_scalar(&query).fetch_all(&pool.db).await;
+    let words = sqlx::query_scalar(&query).fetch_all(pool.get_ref()).await;
     let words: Vec<String> = match words {
         Ok(result) => result,
         Err(error) => {

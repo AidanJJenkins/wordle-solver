@@ -1,64 +1,39 @@
-use crate::AppState;
-use actix_web::{put, delete, get, post, web, HttpResponse, Responder};
+use actix_web::{web, HttpResponse};
 use chrono::Local;
-use sqlx::{Row, PgPool};
+use sqlx::PgPool;
 use log::error;
 use crate::models::users_models::{NewUser, UserResponse, LoginCredentials, Token, Tokens, UpdateUser, UpdatePassword};
 use crate::utils::bcrypt_utils::{hash_password, verify_password};
 use crate::utils::jwt_utils::{generate_access_token, generate_refresh_token, verify_token, decode_token_id};
-use std::time::Instant;
 
-pub fn user_routes(conf: &mut web::ServiceConfig) {
-    let scope = web::scope("/users")
-        .service(create_user)
-        .service(get_all_users)
-        .service(get_user_by_id)
-        .service(update_user)
-        .service(update_user_password)
-        .service(delete_user)
-        .service(login_user)
-        .service(revoke_token)
-        .service(refresh_tokens)
-        .service(check_access);
-
-    conf.service(scope);
-}
-
-#[post("/register")]
-pub async fn create_user(pool: web::Data<AppState>, new_user: web::Json<NewUser>) -> impl Responder {
+pub async fn create_user(
+    pool: web::Data<PgPool>, 
+    new_user: web::Json<NewUser>
+) -> HttpResponse {
     let now = Local::now().naive_local();
-    //This line hashes the user's password using the hash_password function
-    //It uses the match control flow construct to handle the result of the hash_password
-    //the match control flow construct allows you to match a value against a series of patterns and execute code based on the matched pattern
+
     let hashed_password = match hash_password(&new_user.password) {
-        //is the hashing is successful is assigns the hashed password to hashed_password
         Ok(hashed) => hashed,
-        //if it is not successful an error message is logged
         Err(error) => {
             error!("Failed to hash password: {}", error);
             return HttpResponse::InternalServerError().body("Failed to create user");
         }
     };
-    // sqlx::query(r#"..."#): This starts building an SQL query using a raw string literal 
-    match sqlx::query(
+
+    match sqlx::query!(
             r#"
             INSERT INTO users (username, email, password, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING id
-            "#)
-        .bind(&new_user.username)
-        .bind(&new_user.email)
-        .bind(&hashed_password)
-        .bind(now)
-        .bind(now)
-        .fetch_one(&pool.db)
-        .await {
-            //if the query is successful, it returns an httpresponse
-            //the "_" wildcard pattern is a catch-all for unmatched cases. If no patterns match and there is no "_" arm
-            //the match expression will be considered incomplete and the compiler will raise an error.
-            //Ok(_) => HttpResponse::Ok().body("User created"),
+            "#, 
+            new_user.username, new_user.email, hashed_password, now, now,
+            )
+        .fetch_all(pool.get_ref())
+        .await
+        {
             Ok(row) => {
-                let user_id: i32 = row.get("id");
+            if let Some(row) = row.first() {
+                let user_id: i32 = row.id;
 
                 let access_token = match generate_access_token(user_id) {
                     Ok(token) => token,
@@ -81,8 +56,11 @@ pub async fn create_user(pool: web::Data<AppState>, new_user: web::Json<NewUser>
                 };
 
                 HttpResponse::Ok().body(json_body)
+            } else {
+                    HttpResponse::InternalServerError().body("Failed to create user")
+                }
             }
-            //if not successful, it logs an error
+
             Err(error) => {
                 let error_message = error.to_string();
                 if error_message.contains("duplicate key value violates unique constraint") {
@@ -90,157 +68,160 @@ pub async fn create_user(pool: web::Data<AppState>, new_user: web::Json<NewUser>
                     return HttpResponse::BadRequest().body("Username or Email already exists");
                 }
 
-                println!("{error}");
+                println!("{}", error);
                 error!("Failed to insert new user: {}", error);
                 HttpResponse::InternalServerError().body("Failed to create user")
             }
         }
 }
 
-#[get("/")]
-// defineing function, it take the application state as param, which allows you to share app data
-// "impl Responder" means mean the function is returning a value that can be converted to an Http
-// response
-pub async fn get_all_users(pool: web::Data<AppState>) -> impl Responder {
-    //This creates a row vairale with a SQL query to the database to retrieve all of the records in the users table.
-    let rows = sqlx::query("SELECT id, username, email, password, created_at, updated_at FROM users")
-    //The fetch_all() method sends the query to the database and returns a vector of rows representing 
-    //the results of the query. We store this vector of rows in a variable called rows
-        .fetch_all(&pool.db)
-        .await
-        // unwrap  returns the values from the query
-        .unwrap();
-    // users is a variable that stores the data from our query, 
-    // where each row returned by the query is represented as a struct UserResponse
-    let users: Vec<UserResponse> = rows
-        //.into_iter() creates an iterator over the rows vector so that we can process each row individually
-        .into_iter()
-        //map() method applies a transformation to each element of the iterator, in this case, 
-        //we are constructing a new UserResponse object for each row.
-        .map(|row| {
-            UserResponse {
-                //.get() is a method provided by the Row struct of the sqlx crate. It's used to retrieve the value of a column from a row.
-                id: row.get("id"),
-                username: row.get("username"),
-                email: row.get("email"),
-                password: row.get("password"),
-                created_at: row.get("created_at"),
-                updated_at: row.get("updated_at"),
-            }
-        })
-    //collect() method is called on the iterator to collect all the transformed elements into a new vector of type Vec<UserResponse>.
-    .collect();
-
-    //HTTP response with a status code of 200 Ok, indicating that the request has been successfully processed. 
-    //The json() method serializes the users variable into a JSON string
-    HttpResponse::Ok().json(users)
+async fn select_users(
+    pool: &PgPool
+) -> Result<Vec<UserResponse>, sqlx::Error> {
+    let rows = sqlx::query_as!(
+        UserResponse,
+        "
+        SELECT id, username, email, password, created_at, updated_at FROM users"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        log::error!("Failed to execute query: {:?}", e);
+        e
+    })?;
+    Ok(rows)
 }
 
-#[get("/{id}")]
-pub async fn get_user_by_id(pool: web::Data<AppState>, path: web::Path<(i32,)>) -> impl Responder {
-    let (id,) = path.into_inner();
-
-    let query = sqlx::query_as::<_, UserResponse>(
-            "SELECT id, username, email, password, created_at, updated_at FROM users WHERE id = $1"
-        )
-        .bind(id)
-        .fetch_one(&pool.db)
-        .await;
-
-    match query {
-        Ok(user) => HttpResponse::Ok().json(user),
-        Err(_) => HttpResponse::NotFound().json("User not found"),
-    }
-}
-
-#[put("/update/{id}")]
-pub async fn update_user(pool: web::Data<AppState>, path: web::Path<(i32,)>, updated_user: web::Json<UpdateUser>) -> impl Responder{
-    let (id,) = path.into_inner();
-    let user = updated_user.into_inner();
-
-    let query = sqlx::query(
-            "UPDATE users SET username = $1, email = $2 WHERE id = $3"
-        )
-        .bind(user.username)
-        .bind(user.email)
-        .bind(id)
-        .execute(&pool.db)
-        .await;
-
-    match query {
-        Ok(_) => HttpResponse::Ok().json("User updated successfully"),
-        Err(error) => {
-            eprintln!("Error: {}", error);
-            HttpResponse::InternalServerError().json("Failed to update user")
+pub async fn get_all_users(
+    pool: web::Data<PgPool>
+) -> HttpResponse {
+    match select_users(&pool.clone()).await{
+        Ok(users) => HttpResponse::Ok().json(users),
+        Err(e) => {
+            log::error!("Failed to execute query: {:?}", e);
+            HttpResponse::BadRequest().finish()
         }
     }
 }
 
-#[put("/update_password/{id}")]
-pub async fn update_user_password(pool: web::Data<AppState>, path: web::Path<(i32,)>, updated_user: web::Json<UpdatePassword>) -> impl Responder{
-    let (id,) = path.into_inner();
-    let user = updated_user.into_inner();
+async fn select_user(
+    pool: &PgPool,
+    id: &i32
+) -> Result<Vec<UserResponse>, sqlx::Error> {
+    let rows = sqlx::query_as!(
+        UserResponse,
+        "
+        SELECT id, username, email, password, created_at, updated_at FROM users WHERE id = $1",
+        id
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        log::error!("Failed to execute query: {:?}", e);
+        e
+    })?;
+    Ok(rows)
+}
 
-    let hashed_password = match hash_password(&user.password) {
+pub async fn get_user_by_id(
+    pool: web::Data<PgPool>,
+    path: web::Path<i32>
+) -> HttpResponse {
+    let id = path.into_inner();
+    match select_user(&pool.clone(), &id).await{
+        Ok(users) => HttpResponse::Ok().json(users),
+        Err(e) => {
+            log::error!("Failed to execute query: {:?}", e);
+            HttpResponse::BadRequest().finish()
+        }
+    }
+}
+
+pub async fn update_user(
+    pool: web::Data<PgPool>,
+    path: web::Path<i32>,
+    updated_user: web::Json<UpdateUser>
+) -> HttpResponse {
+    let id = path.into_inner();
+    match sqlx::query!(
+            r#"UPDATE users SET username = $1, email = $2 WHERE id = $3"#,updated_user.username, updated_user.email, id
+    )
+    .execute(pool.get_ref())
+    .await
+    {
+        Ok(_) => HttpResponse::Ok().json("user updated succesfully"),
+        Err(e) => {
+            log::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn update_password(
+    pool: web::Data<PgPool>,
+    path: web::Path<i32>,
+    updated_pw: web::Json<UpdatePassword>
+) -> HttpResponse {
+    let id = path.into_inner();
+    let hashed_password = match hash_password(&updated_pw.password) {
         Ok(hashed) => hashed,
         Err(error) => {
             error!("Failed to hash password: {}", error);
             return HttpResponse::InternalServerError().body("Failed to create user");
         }
     };
-
-    let query = sqlx::query(
-            "UPDATE users SET password = $1 WHERE id = $2"
-        )
-        .bind(hashed_password)
-        .bind(id)
-        .execute(&pool.db)
-        .await;
-
-    match query {
-        Ok(_) => HttpResponse::Ok().json("User password updated"),
-        Err(error) => {
-            eprintln!("Error: {}", error);
-            HttpResponse::InternalServerError().json("Failed to update user")
+    match sqlx::query!(
+            r#"UPDATE users SET password = $1 WHERE id = $2"#, hashed_password, id
+    )
+    .execute(pool.get_ref())
+    .await
+    {
+        Ok(_) => HttpResponse::Ok().json("password updated succesfully"),
+        Err(e) => {
+            log::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
         }
     }
 }
 
-#[delete("/delete/{id}")]
-pub async fn delete_user(pool: web::Data<AppState>, path: web::Path<(i32,)>) -> impl Responder {
-    let (id,) = path.into_inner();
-
-    let query = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(id)
-        .execute(&pool.db)
-        .await;
-
-    match query {
-        Ok(_) => HttpResponse::Ok().json("User deleted successfully"),
-        Err(_) => HttpResponse::InternalServerError().json("Failed to delete user"),
+pub async fn delete_user(
+    pool: web::Data<PgPool>,
+    path: web::Path<i32>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    match sqlx::query!(
+        r#"DELETE FROM users WHERE id = $1"#,
+        id
+    )
+    .execute(pool.get_ref())
+    .await
+    {
+        Ok(_) => HttpResponse::Ok().json("Account deleted successfully"),
+        Err(e) => {
+            log::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
     }
 }
 
-async fn validate_credentials(pool: &web::Data<AppState>, username: &str, password: &str) -> Option<i32> {
-    // if I dont need to bind anything, use the query! macro instead of query
-    let query_result = sqlx::query!(
+async fn validate_credentials(
+    pool: &web::Data<PgPool>, 
+    username: &str, password: &str
+) -> Option<i32> {
+    let query = sqlx::query!(
         r#"
         SELECT id, password FROM users WHERE username = $1
         "#,
         username
     )
-    .fetch_optional(&pool.db)
+    .fetch_optional(pool.get_ref())
     .await
     .expect("Failed to execute SQL query");
 
-    if let Some(row) = query_result {
+    if let Some(row) = query {
         let stored_password = row.password;
 
-        let start_time = Instant::now();
             if verify_password(password, &stored_password) {
-                // Return the user ID if the credentials are valid
-                let total_duration = start_time.elapsed();
-                println!("Total validation time: {:?}", total_duration);
                 return Some(row.id);
             }
     }
@@ -248,8 +229,10 @@ async fn validate_credentials(pool: &web::Data<AppState>, username: &str, passwo
     None
 }
 
-#[post("/login")]
-pub async fn login_user(pool: web::Data<AppState>, credentials: web::Json<LoginCredentials>) -> HttpResponse {
+pub async fn login_user(
+    pool: web::Data<PgPool>, 
+    credentials: web::Json<LoginCredentials>
+) -> HttpResponse {
     let user_id = match validate_credentials(&pool, &credentials.username, &credentials.password).await {
         Some(user_id) => user_id,
         None => return HttpResponse::Unauthorized().body("Invalid credentials"),
@@ -278,18 +261,18 @@ pub async fn login_user(pool: web::Data<AppState>, credentials: web::Json<LoginC
     HttpResponse::Ok().body(json_body)
 }
 
-#[post("/revoke_token")]
-pub async fn revoke_token(pool: web::Data<AppState>, token: web::Json<Token>) -> HttpResponse {
+pub async fn revoke_token(
+    pool: web::Data<PgPool>, 
+    token: web::Json<Token>
+) -> HttpResponse {
     let now = Local::now().naive_local();
 
-    match sqlx::query(
+    match sqlx::query!(
             r#"
             INSERT INTO revoked_tokens (token, created_at)
             VALUES ($1, $2)
-            "#)
-        .bind(&token.token)
-        .bind(now)
-        .execute(&pool.db)
+            "#, token.token, now)
+        .execute(pool.get_ref())
         .await {
             Ok(_) => HttpResponse::Ok().body("Token added"),
             Err(error) => {
@@ -300,9 +283,11 @@ pub async fn revoke_token(pool: web::Data<AppState>, token: web::Json<Token>) ->
         }
 }
 
-#[post("/get_new_tokens")]
-pub async fn refresh_tokens(token: web::Json<Token>, pool: web::Data<AppState>) -> HttpResponse {
-    let revoked_token = check_revoked_token(&token.token, &pool.db).await;
+pub async fn refresh_tokens(
+    token: web::Json<Token>, 
+    pool: web::Data<PgPool>
+) -> HttpResponse {
+    let revoked_token = check_revoked_token(&token.token, &pool).await;
 
     if revoked_token {
         return HttpResponse::Unauthorized().body("Token has been revoked");
@@ -345,7 +330,10 @@ pub async fn refresh_tokens(token: web::Json<Token>, pool: web::Data<AppState>) 
     HttpResponse::Ok().body(json_body)
 }
 
-async fn check_revoked_token(token: &str, pool: &PgPool) -> bool {
+async fn check_revoked_token(
+    token: &str, 
+    pool: &PgPool
+) -> bool {
     let query = sqlx::query(
         r#"
         SELECT token FROM revoked_tokens WHERE token = $1
@@ -361,9 +349,11 @@ async fn check_revoked_token(token: &str, pool: &PgPool) -> bool {
     }
 }
 
-#[post("/check_access")]
-pub async fn check_access(token: web::Json<Token>, pool: web::Data<AppState>) -> HttpResponse {
-    let revoked_token = check_revoked_token(&token.token, &pool.db).await;
+pub async fn check_access(
+    token: web::Json<Token>, 
+    pool: web::Data<PgPool>
+) -> HttpResponse {
+    let revoked_token = check_revoked_token(&token.token, &pool).await;
 
     if revoked_token {
         return HttpResponse::Unauthorized().body("Token has been revoked");
