@@ -206,7 +206,8 @@ pub async fn delete_user(
 
 async fn validate_credentials(
     pool: &web::Data<PgPool>, 
-    username: &str, password: &str
+    username: &str, 
+    password: &str
 ) -> Option<i32> {
     let query = sqlx::query!(
         r#"
